@@ -72,14 +72,12 @@ class Learner:
         self,
         model,
         dls=(0,),
-        # loss_func=F.cross_entropy,
         lr=0.1,
         cbs=None,
         opt_func=optim.SGD,
     ):
         self.model = model
         self.dls = dls
-        # self.loss_func = loss_func
         self.lr = lr
         self.cbs = cbs if cbs else []
         self.opt_func = opt_func
@@ -89,7 +87,7 @@ class Learner:
         self.predict()
         self.callback("after_predict")
         # self.get_loss()
-        self.callback("after_loss")
+        # self.callback("after_loss")
         if self.training:
             self.backward()
             self.callback("after_backward")
@@ -117,7 +115,6 @@ class Learner:
                     self.one_epoch(False)
 
     def fit(self, n_epochs=1, train=True, valid=True, cbs=None, lr=None):
-        # `add_cb` and `rm_cb` were added in lesson 18
         if cbs is None:
             cbs = []
         for cb in cbs:
@@ -181,7 +178,7 @@ class TrainCB(Callback):
     def predict(self, learn):
         # import pdb; pdb.set_trace()
         learn.preds, learn.loss = learn.model(*learn.batch)
-        print("epoch", learn.epoch, "batch", learn.iter, "loss", learn.loss.item())
+        print("epoch", learn.epoch, "step", learn.iter, "loss", learn.loss.item())
 
     def backward(self, learn):
         learn.loss.backward()
