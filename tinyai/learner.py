@@ -2,7 +2,8 @@
 
 # %% auto 0
 __all__ = ['default_device', 'DataSet', 'DataLoaders', 'CancelFitException', 'CancelBatchException', 'CancelEpochException',
-           'Callback', 'run_cbs', 'with_cbs', 'Learner', 'to_device', 'DeviceCB', 'TrainCB']
+           'Callback', 'run_cbs', 'with_cbs', 'Learner', 'to_device', 'DeviceCB', 'TrainCB', 'to_cpu', 'MetricsCB',
+           'ProgressCB']
 
 # %% ../nbs/pt2-learner.ipynb 1
 import torch
@@ -10,7 +11,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch import optim
-from typing import Mapping, Any, Tuple, List, Union
+from typing import Mapping
 from copy import copy
 
 # %% ../nbs/pt2-learner.ipynb 2
@@ -178,7 +179,7 @@ class TrainCB(Callback):
     def predict(self, learn):
         # import pdb; pdb.set_trace()
         learn.preds, learn.loss = learn.model(*learn.batch)
-        print("epoch", learn.epoch, "step", learn.iter, "loss", learn.loss.item())
+        # print("epoch", learn.epoch, "step", learn.iter, "loss", learn.loss.item())
 
     def backward(self, learn):
         learn.loss.backward()
@@ -188,3 +189,110 @@ class TrainCB(Callback):
 
     def zero_grad(self, learn):
         learn.opt.zero_grad()
+
+# %% ../nbs/pt2-learner.ipynb 24
+from torcheval.metrics import Mean
+
+# %% ../nbs/pt2-learner.ipynb 25
+def to_cpu(x):
+    if isinstance(x, Mapping):
+        return {k: to_cpu(v) for k, v in x.items()}
+    if isinstance(x, list):
+        return [to_cpu(o) for o in x]
+    if isinstance(x, tuple):
+        return tuple(to_cpu(list(x)))
+    res = x.detach().cpu()
+    return res.float() if res.dtype == torch.float16 else res
+
+
+class MetricsCB(Callback):
+    def __init__(self, *ms, **metrics):
+        for o in ms:
+            metrics[type(o).__name__] = o
+        self.metrics = metrics
+        self.all_metrics = copy(metrics)
+        self.all_metrics["loss"] = self.loss = Mean()
+
+    def _log(self, d):
+        print(d)
+
+    def before_fit(self, learn):
+        learn.metrics = self
+
+    def before_epoch(self, learn):
+        [o.reset() for o in self.all_metrics.values()]
+
+    def after_epoch(self, learn):
+        log = {k: f"{v.compute():.3f}" for k, v in self.all_metrics.items()}
+        # log["epoch"] = f"{learn.epoch}"
+        log["epoch"] = learn.epoch
+        log["train"] = "train" if learn.model.training else "eval"
+        self._log(log)
+
+    def after_batch(self, learn):
+        x, y, *_ = to_cpu(learn.batch)
+        for m in self.metrics.values():
+            m.update(to_cpu(learn.preds), y)
+        self.loss.update(to_cpu(learn.loss), weight=len(x))
+
+# %% ../nbs/pt2-learner.ipynb 26
+from fastprogress import progress_bar, master_bar
+import fastcore.all as fc
+
+# %% ../nbs/pt2-learner.ipynb 27
+class ProgressCB(Callback):
+    order = MetricsCB.order + 1
+
+    def __init__(self, plot=False):
+        self.plot = plot
+
+    def before_fit(self, learn):
+        learn.epochs = self.mbar = master_bar(learn.epochs)
+        self.first = True
+        if hasattr(learn, "metrics"):
+            learn.metrics._log = self._log
+        self.losses = []
+        self.val_losses = []
+
+    def _log(self, d):
+        if self.first:
+            self.mbar.write(list(d), table=True)
+            self.first = False
+        # import pdb; pdb.set_trace()
+        self.mbar.write(list(d.values()), table=True)
+
+    def before_epoch(self, learn):
+        learn.dl = progress_bar(learn.dl, leave=False, parent=self.mbar)
+
+    def after_batch(self, learn):
+        learn.dl.comment = f"{learn.loss:.3f}"
+        if self.plot and hasattr(learn, "metrics") and learn.training:
+            self.losses.append(learn.loss.item())
+            if self.val_losses:
+                self.mbar.update_graph(
+                    [
+                        [fc.L.range(self.losses), self.losses],
+                        [
+                            fc.L.range(learn.epoch).map(
+                                lambda x: (x + 1) * len(learn.dls.train)
+                            ),
+                            self.val_losses,
+                        ],
+                    ]
+                )
+
+    def after_epoch(self, learn):
+        if not learn.training:
+            if self.plot and hasattr(learn, "metrics"):
+                self.val_losses.append(learn.metrics.all_metrics["loss"].compute())
+                self.mbar.update_graph(
+                    [
+                        [fc.L.range(self.losses), self.losses],
+                        [
+                            fc.L.range(learn.epoch + 1).map(
+                                lambda x: (x + 1) * len(learn.dls.train)
+                            ),
+                            self.val_losses,
+                        ],
+                    ]
+                )
