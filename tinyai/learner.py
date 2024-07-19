@@ -269,30 +269,32 @@ class ProgressCB(Callback):
         if self.plot and hasattr(learn, "metrics") and learn.training:
             self.losses.append(learn.loss.item())
             if self.val_losses:
-                self.mbar.update_graph(
+                graphs = [
+                    [fc.L.range(self.losses), self.losses],
                     [
-                        [fc.L.range(self.losses), self.losses],
-                        [
-                            fc.L.range(learn.epoch).map(
-                                lambda x: (x + 1) * len(learn.dls.train)
-                            ),
-                            self.val_losses,
-                        ],
-                    ]
-                )
+                        fc.L.range(learn.epoch).map(
+                            lambda x: (x + 1) * len(learn.dls.train)
+                        ),
+                        self.val_losses,
+                    ],
+                ]
+            else:
+                graphs = [[fc.L.range(self.losses), self.losses]]
+            self.mbar.update_graph(graphs)
 
     def after_epoch(self, learn):
-        if not learn.training:
-            if self.plot and hasattr(learn, "metrics"):
+        if self.plot and hasattr(learn, "metrics"):
+            if not learn.training:
                 self.val_losses.append(learn.metrics.all_metrics["loss"].compute())
-                self.mbar.update_graph(
+                graphs = [
+                    [fc.L.range(self.losses), self.losses],
                     [
-                        [fc.L.range(self.losses), self.losses],
-                        [
-                            fc.L.range(learn.epoch + 1).map(
-                                lambda x: (x + 1) * len(learn.dls.train)
-                            ),
-                            self.val_losses,
-                        ],
-                    ]
-                )
+                        fc.L.range(learn.epoch + 1).map(
+                            lambda x: (x + 1) * len(learn.dls.train)
+                        ),
+                        self.val_losses,
+                    ],
+                ]
+            else:
+                graphs = [[fc.L.range(self.losses), self.losses]]
+            self.mbar.update_graph(graphs)
