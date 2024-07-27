@@ -114,5 +114,4 @@ d = { 'settings': { 'branch': 'master',
                               'tinyai.model.MLP': ('pt1-vanilla-gpt2.html#mlp', 'tinyai/model.py'),
                               'tinyai.model.MLP.__init__': ('pt1-vanilla-gpt2.html#mlp.__init__', 'tinyai/model.py'),
                               'tinyai.model.MLP.forward': ('pt1-vanilla-gpt2.html#mlp.forward', 'tinyai/model.py'),
-                              'tinyai.model.ResidualLinear': ('pt1-vanilla-gpt2.html#residuallinear', 'tinyai/model.py'),
                               'tinyai.model.get_model': ('pt1-vanilla-gpt2.html#get_model', 'tinyai/model.py')}}}
