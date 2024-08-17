@@ -30,6 +30,7 @@ class TimeCallback(Callback):
         pass
 
     def after_batch(self, learn):
+        torch.cuda.synchronize()
         t1 = time.time()
         dt = (t1 - self.t0) * 1000
         x, _ = learn.batch
