@@ -60,7 +60,7 @@ class CompileCB(Callback):
     def before_fit(self, learn):
         learn.model = torch.compile(learn.model)
 
-# %% ../nbs/pt5-speedup.ipynb 26
+# %% ../nbs/pt5-speedup.ipynb 27
 class FastCausalSelfAttention(CausalSelfAttention):
 
     def forward(self, x):
@@ -84,6 +84,6 @@ class FastCausalSelfAttention(CausalSelfAttention):
         y = self.c_proj(y)
         return y
 
-# %% ../nbs/pt5-speedup.ipynb 31
+# %% ../nbs/pt5-speedup.ipynb 32
 def get_model():
     return GPT(GPTConfig(vocab_size=50304), proj=ResidualLinear, attn=FastCausalSelfAttention)
