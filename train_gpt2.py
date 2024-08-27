@@ -5,12 +5,16 @@ from tinyai.init import *
 from tinyai.speedup import *
 from tinyai.hyperparam import *
 from tinyai.distributed import *
+from tinyai.fineweb import *
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import os
 from functools import partial
+import numpy as np
+import multiprocessing as mp
+from datasets import load_dataset
 
 import tiktoken
 import os
@@ -27,6 +31,8 @@ if ddp_enabled:
     device = f"cuda:{ddp_local_rank}"
     torch.cuda.set_device(device)
     master_process = ddp_rank == 0
+    if master_process:
+        print(f"rank: {ddp_rank}, local rank: {ddp_local_rank}, world size: {ddp_world_size}")
 else:
     ddp_rank = 0
     ddp_local_rank = 0
@@ -46,22 +52,37 @@ def to_tensor(f):
     return _f
 
 
-enc = tiktoken.get_encoding("gpt2")
-
-
 @to_tensor
 def get_tokens(input_file):
     with open(input_file) as f:
         text = f.read()
-    tokens = enc.encode(text)
+    tokens = gpt2_encoder.encode(text)
     return tokens
 
 
-# create data loader
-cwd = os.getcwd()
-data_dir = f"{cwd}"
-pattern = "input.txt"
+os.environ["DATA_DIR"] = "./edu_fineweb10B"
+os.environ["CACHE_DIR"] = "./cache"
 
+# load huggingface dataset
+data_dir = os.getenv("DATA_DIR", None) or "./edu_fineweb10B"
+cache_dir = os.getenv("CACHE_DIR", None)  # default to ~/.cache/huggingface/datasets
+remote_name = "sample-10BT"
+shard_size = int(1e8)
+fw = load_dataset(
+    "HuggingFaceFW/fineweb-edu", name=remote_name, split="train", cache_dir=cache_dir
+)
+
+# convert to shards
+nproc = max(1, mp.cpu_count() // 2)
+try:
+    with TokenShardWriter(shard_size=shard_size, data_dir=data_dir) as wrt:
+        with mp.Pool(nproc) as pool:
+            for tokens in pool.imap(to_tokens_np, fw, chunksize=16):
+                wrt.write(tokens)
+except DataDirNotEmptyError:
+    if master_process:
+        print("Data directory is not empty, skipping creating shards")
+    pass
 
 total_batch_size = 2**19  # 524288, 0.5M
 B = 8  # bach size (micro batch size)
@@ -77,15 +98,29 @@ if master_process:
         f"=> rank: {ddp_rank}, local rank: {ddp_local_rank}, world size: {ddp_world_size}"
     )
 
+# create data loader
 tds = FSDataSet(
     data_dir,
-    pattern=pattern,
-    token_fn=get_tokens,
+    pattern="train",
+    token_fn=to_tensor(load_np_tokens),
     T=T,
     num_proc=ddp_world_size,
     rank=ddp_rank,
 )
-dls = DataLoaders.from_dd([tds, None], batch_size=B, drop_last=True)
+vds = FSDataSet(
+    data_dir,
+    pattern="val",
+    token_fn=to_tensor(load_np_tokens),
+    T=T,
+    num_proc=ddp_world_size,
+    rank=ddp_rank,
+)
+dls = DataLoaders.from_dd([tds, vds], batch_size=B, drop_last=True)
+# tdl = dls.train
+# x, y = next(iter(tdl))
+# print(x.shape, y.shape)
+# os._exit(0)
+
 
 # create model
 model = get_model().to(device)
@@ -94,7 +129,6 @@ model = DDP(model, device_ids=[ddp_local_rank])
 # create learner
 cbs = [
     DDPGradAccuTrainCB(accu_steps=accu_steps),
-    FixedStepCallback(step_count=50),
     InitWeightsCB(),
     DDPCB(ddp_local_rank),
     DeviceCB(),
