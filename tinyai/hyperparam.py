@@ -199,6 +199,13 @@ class GradAccuRecordCB(Callback):
 
 # %% ../nbs/pt6-hyperparam.ipynb 51
 class GradAccuLogCallback(Callback):
+    def __init__(self, **d) -> None:
+        self.d = d
+
+    def before_fit(self, learn):
+        # self.recs = {k: [] for k in self.d.keys()}
+        self.reset()
+
     def before_batch(self, learn):
         if learn._micro_step_count % learn.accu_steps != 0:
             return
@@ -206,9 +213,8 @@ class GradAccuLogCallback(Callback):
         self.loss_accu = 0
 
     def _log(self, d):
-        print(
-            f"step {d['step']}, loss: {d['loss']:.2f}, time: {d['time']:.2f}msi, tok/sec: {d['tok/sec']:.0f}"
-        )
+        d = {k: f"{v:.4f}" if not isinstance(v, str) else v for k, v in d.items()}
+        print(d)
 
     def reset(self):
         self.loss_accu = 0
@@ -217,19 +223,13 @@ class GradAccuLogCallback(Callback):
         self.loss_accu += learn.loss.detach()
         if learn._micro_step_count % learn.accu_steps != 0:
             return
-        torch.cuda.synchronize() # wait for the GPU to finish work
-        t1 = time.time()
-        dt = (t1 - self.t0) * 1000
-        x, _ = learn.batch
-        # tokens_per_sec = x.shape[0] * x.shape[1] / (t1 - self.t0) 
-        tokens_per_sec = x.shape[0] * x.shape[1] / (t1 - self.t0) * learn.accu_steps
+        torch.cuda.synchronize()  # wait for the GPU to finish work
+        self.t1 = time.time()
 
-        d = {
-            "step": learn.opt._step_count,
-            "time": dt,
-            "loss": self.loss_accu,
-            "tok/sec": tokens_per_sec,
+        log = {
+            "step": f"{learn.opt._step_count: 5d}",
+            "time": f"{(self.t1 - self.t0) * 1000:.2f}",
         }
-
-        self._log(d)
+        log.update({k: v(self, learn) for k, v in self.d.items()})
+        self._log(log)
         self.reset()
