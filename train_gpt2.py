@@ -137,6 +137,23 @@ cbs = [
 # record = GradAccuRecordCB(lr=_lr, grad_norm=_grad_norm)
 schd = GradAccuScheduleCB(partial(CosineLR, warmup_steps=10, max_steps=50))
 
+def get_learner_loss(cb, learn):
+    if ddp_enabled:
+        dist.all_reduce(cb.loss_accu, op=dist.ReduceOp.SUM)
+    return cb.loss_accu.item()
+
+def get_tokens_per_sec(cb, learn):
+    x, _ = learn.batch
+    return x.shape[0] * x.shape[1] / (cb.t1 - cb.t0) * learn.accu_steps * ddp_world_size
+
+logcb = GradAccuLogCallback(
+    **{
+        "loss": lambda cb, learn: f"{get_learner_loss(cb, learn):2.6f}",
+        "lr": lambda cb, learn: f"{get_learner_lr(cb ,learn):.4e}",
+        "norm": get_learner_grad_norm,
+        "tok/sec": get_tokens_per_sec,
+    }
+)
 
 def fit(model, epochs=1, opt_func=get_optimizer, xtra_cbs=None, lr=3e-4):
     lrn = Learner(
@@ -150,6 +167,6 @@ def fit(model, epochs=1, opt_func=get_optimizer, xtra_cbs=None, lr=3e-4):
 fit(
     model,
     opt_func=get_optimizer,
-    xtra_cbs=[schd, GradAccuLogCallback(), FixedStepCallback(step_count=5)],
+    xtra_cbs=[schd, logcb, FixedStepCallback(step_count=5)],
     lr=6e-4,
 )
